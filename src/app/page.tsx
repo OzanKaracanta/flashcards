@@ -246,7 +246,7 @@ export default function Home() {
     }
   }, [user]);
 
-  const saveUserProgress = async (newLearnedWords: Set<string>, newActiveGroup: number) => {
+  const saveUserProgress = async (newLearnedWords: Set<string>, newActiveGroup: number, newWord?: string) => {
     if (!user) {
       console.warn('saveUserProgress called without user');
       return;
@@ -265,70 +265,36 @@ export default function Home() {
       }))
     };
 
-    console.log('Attempting to save progress:', {
-      userId: user.uid,
-      progressData: {
-        activeGroup: progress.activeGroup,
-        learnedWordsCount: progress.learnedWords.length,
-        recentlyLearnedCount: progress.recentlyLearned.length,
-        learnedWords: progress.learnedWords,
+    try {
+      // Save to main user document
+      const userDoc = doc(db, 'users', user.uid);
+      const docData = {
+        ...progress,
+        email: user.email,
+        updatedAt: new Date().toISOString(),
+        learnedWords: learnedWordsArray,
         recentlyLearned: progress.recentlyLearned
+      };
+      await setDoc(userDoc, docData);
+      console.log('Successfully saved main user document with data:', docData);
+
+      // Sadece yeni öğrenilen kelimeyi yaz
+      if (newWord) {
+        const wordData = wordsWithGroups.find(w => w.english === newWord);
+        if (wordData) {
+          const wordDoc = doc(db, 'users', user.uid, 'learnedWords', newWord);
+          await setDoc(wordDoc, {
+            word: String(wordData.english),
+            translation: String(wordData.turkish),
+            learnedAt: new Date().toISOString(),
+            group: Number(wordData.group)
+          });
+          console.log(`Successfully saved individual word: ${newWord}`);
+        }
       }
-    });
-
-    if (!user) {
-      localStorage.setItem('userProgress', JSON.stringify(progress));
-      console.log('Saved guest progress to localStorage');
-    } else if (user) {
-      try {
-        // Save to main user document
-        const userDoc = doc(db, 'users', user.uid);
-        
-        // Ensure we're saving a plain object with primitive values
-        const docData = {
-          ...progress,
-          email: user.email,
-          updatedAt: new Date().toISOString(),
-          learnedWords: learnedWordsArray,
-          recentlyLearned: progress.recentlyLearned
-        };
-
-        await setDoc(userDoc, docData);
-        console.log('Successfully saved main user document with data:', docData);
-
-        // Save individual learned words
-        const batch = writeBatch(db);
-        let wordCount = 0;
-        learnedWordsArray.forEach(word => {
-          const wordDoc = doc(db, 'users', user.uid, 'learnedWords', word);
-          const wordData = wordsWithGroups.find(w => w.english === word);
-          if (wordData) {
-            batch.set(wordDoc, {
-              word: String(wordData.english),
-              translation: String(wordData.turkish),
-              learnedAt: new Date().toISOString(),
-              group: Number(wordData.group)
-            });
-            wordCount++;
-          }
-        });
-        await batch.commit();
-        console.log(`Successfully saved ${wordCount} individual words`);
-
-        // Verify the save by reading back
-        const verifyDoc = await getDoc(userDoc);
-        const savedData = verifyDoc.data();
-        console.log('Verification - Read back saved data:', {
-          activeGroup: savedData?.activeGroup,
-          learnedWordsCount: savedData?.learnedWords?.length,
-          recentlyLearnedCount: savedData?.recentlyLearned?.length,
-          learnedWords: savedData?.learnedWords,
-          recentlyLearned: savedData?.recentlyLearned
-        });
-      } catch (error) {
-        console.error('Error in saveUserProgress:', error);
-        throw error;
-      }
+    } catch (error) {
+      console.error('Error in saveUserProgress:', error);
+      throw error;
     }
   };
 
@@ -382,7 +348,7 @@ export default function Home() {
     setLearnedWords(prev => {
       const newSet = new Set(prev);
       newSet.add(word);
-      
+
       // Add to recently learned words
       const currentWord = wordsWithGroups.find(w => w.english === word);
       if (currentWord) {
@@ -394,9 +360,9 @@ export default function Home() {
           },
           ...recentlyLearned.filter(w => w.english !== word).slice(0, 4)
         ];
-        
+
         setRecentlyLearned(newRecentlyLearned);
-        
+
         // Save progress with updated recently learned words
         const progress: UserProgress = {
           activeGroup,
@@ -407,7 +373,7 @@ export default function Home() {
         if (!user) {
           localStorage.setItem('userProgress', JSON.stringify(progress));
         } else {
-          saveUserProgress(newSet, activeGroup);
+          saveUserProgress(newSet, activeGroup, word); // sadece yeni kelimeyi yaz
         }
       }
 
@@ -421,7 +387,7 @@ export default function Home() {
         // Verify next group exists before proceeding
         const nextGroup = activeGroup + 1;
         const nextGroupWords = wordsWithGroups.filter(w => w.group === nextGroup);
-        
+
         if (nextGroupWords.length > 0 && nextGroup <= 10) {
           setActiveGroup(nextGroup);
           // Find first unlearned word in the next group
