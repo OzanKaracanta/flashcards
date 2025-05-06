@@ -9,9 +9,8 @@ import {
   signOut,
   onAuthStateChanged
 } from 'firebase/auth';
-import { auth, googleProvider } from './firebase';
+import { auth, googleProvider, db } from './firebase';
 import { doc, getDoc, setDoc } from 'firebase/firestore';
-import { db } from './firebase';
 
 interface AuthContextType {
   user: User | null;
@@ -32,31 +31,26 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [isGuest, setIsGuest] = useState(false);
 
   useEffect(() => {
-    console.log('AuthProvider - Setting up auth state listener');
     const unsubscribe = onAuthStateChanged(auth, (user) => {
-      console.log('AuthProvider - Auth state changed:', user);
       setUser(user);
       setLoading(false);
     });
 
-    return () => {
-      console.log('AuthProvider - Cleaning up auth state listener');
-      unsubscribe();
-    };
+    return () => unsubscribe();
   }, []);
 
   const signInWithGoogle = async () => {
     try {
       const result = await signInWithPopup(auth, googleProvider);
       const user = result.user;
-      console.log('AuthProvider - Google sign in successful:', user);
       
-      // Check if user document exists, if not create one
       const userDoc = await getDoc(doc(db, 'users', user.uid));
       if (!userDoc.exists()) {
         await setDoc(doc(db, 'users', user.uid), {
           email: user.email,
+          activeGroup: 1,
           learnedWords: [],
+          recentlyLearned: [],
           createdAt: new Date().toISOString()
         });
       }
@@ -68,7 +62,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const signInWithEmail = async (email: string, password: string) => {
     try {
-      await signInWithEmailAndPassword(auth, email, password);
+      const result = await signInWithEmailAndPassword(auth, email, password);
+      const user = result.user;
+      
+      const userDoc = await getDoc(doc(db, 'users', user.uid));
+      if (!userDoc.exists()) {
+        await setDoc(doc(db, 'users', user.uid), {
+          email: user.email,
+          activeGroup: 1,
+          learnedWords: [],
+          recentlyLearned: [],
+          createdAt: new Date().toISOString()
+        });
+      }
     } catch (error) {
       console.error('Error signing in with email:', error);
       throw error;
@@ -79,12 +85,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     try {
       const result = await createUserWithEmailAndPassword(auth, email, password);
       const user = result.user;
-      console.log('AuthProvider - Email sign up successful:', user);
       
-      // Create user document in Firestore
       await setDoc(doc(db, 'users', user.uid), {
         email: user.email,
+        activeGroup: 1,
         learnedWords: [],
+        recentlyLearned: [],
         createdAt: new Date().toISOString()
       });
     } catch (error) {
@@ -95,7 +101,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const logout = async () => {
     try {
-      console.log('AuthProvider - Logging out');
       await signOut(auth);
       setIsGuest(false);
     } catch (error) {
@@ -115,11 +120,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setIsGuest
   };
 
-  console.log('AuthProvider - Current state:', { user, loading, isGuest });
+  if (loading) {
+    return null;
+  }
 
   return (
     <AuthContext.Provider value={value}>
-      {!loading && children}
+      {children}
     </AuthContext.Provider>
   );
 }
